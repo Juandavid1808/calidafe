@@ -1,0 +1,975 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Calidafé - Monitoreo & Control IoT</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root { 
+            --bg: #121824; 
+            --card: #1e293b; 
+            --text: #f8fafc; 
+            --accent: #22c55e; 
+            --danger: #ef4444; 
+            --warning: #f59e0b; 
+            --info: #3b82f6; 
+            --subtext: #94a3b8;
+            --input-bg: #0f172a;
+            --border: #334155;
+        }
+
+        body { font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 20px; }
+        .container { max-width: 1100px; margin: 0 auto; }
+        .card { background: var(--card); padding: 20px; border-radius: 12px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 15px; }
+        
+        /* Métricas */
+        .metric-title { font-size: 0.9em; color: var(--subtext); }
+        .metric-value { font-size: 1.8em; font-weight: bold; margin-top: 5px; }
+        .metric-sub { font-size: 0.85em; margin-top: 4px; color: var(--subtext); }
+        
+        /* Botones y Controles */
+        button { background: var(--info); color: white; border: none; padding: 10px 16px; border-radius: 8px; cursor: pointer; font-weight: bold; transition: opacity 0.2s; }
+        button:hover { opacity: 0.9; }
+        .btn-danger { background: var(--danger); }
+        .btn-success { background: var(--accent); }
+        .btn-warning { background: var(--warning); }
+        .btn-sm { padding: 6px 12px; font-size: 0.85em; }
+        
+        input, select { background: var(--input-bg); color: white; border: 1px solid var(--border); padding: 10px 12px; border-radius: 6px; margin: 5px 0 15px 0; width: 100%; box-sizing: border-box; }
+        .hidden { display: none !important; }
+        .header-flex { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; }
+        
+        /* Tablas */
+        .table-container { max-height: 240px; overflow-y: auto; margin-top: 15px; border-radius: 6px; }
+        table { width: 100%; border-collapse: collapse; text-align: left; font-size: 0.9em; }
+        th, td { padding: 10px 12px; border-bottom: 1px solid var(--border); }
+        th { color: var(--subtext); background: var(--input-bg); position: sticky; top: 0; }
+        
+        /* Badges & Alertas */
+        .badge-optimal { background: rgba(34, 197, 94, 0.2); color: var(--accent); border: 1px solid var(--accent); padding: 4px 8px; border-radius: 6px; font-weight: bold; }
+        .badge-warning-risk { background: rgba(245, 158, 11, 0.2); color: var(--warning); border: 1px solid var(--warning); padding: 4px 8px; border-radius: 6px; font-weight: bold; }
+        .badge-danger-risk { background: rgba(239, 68, 68, 0.2); color: var(--danger); border: 1px solid var(--danger); padding: 4px 8px; border-radius: 6px; font-weight: bold; }
+
+        .alert-banner { background: rgba(239, 68, 68, 0.15); border-left: 5px solid var(--danger); padding: 15px; border-radius: 8px; margin-bottom: 20px; display: flex; align-items: center; justify-content: space-between; }
+        .alert-success-banner { background: rgba(34, 197, 94, 0.15); border-left: 5px solid var(--accent); padding: 15px; border-radius: 8px; margin-bottom: 20px; display: flex; align-items: center; justify-content: space-between; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <!-- MODAL DE LOGIN (AUTENTICACIÓN Y ASIGNACIÓN DE ROLES) -->
+    <div id="login-modal" class="card" style="max-width: 400px; margin: 60px auto;">
+        <h2>🔐 Acceso Asignado - Calidafé</h2>
+        <p style="color: var(--subtext); font-size: 0.9em;">Ingresa con tus credenciales registradas:</p>
+        <label>Usuario o Correo:</label>
+        <input type="text" id="login-user" placeholder="Ej. usuario@ejemplo.com o nombre">
+        <label>Contraseña / PIN:</label>
+        <input type="password" id="login-pin" placeholder="••••">
+        <button onclick="iniciarSesion()" style="width: 100%;">Iniciar Sesión</button>
+        <p id="login-error" style="color: var(--danger); display: none; margin-top: 12px; font-size: 0.9em; text-align: center;">Usuario o contraseña incorrectos.</p>
+    </div>
+
+    <!-- DASHBOARD PRINCIPAL -->
+    <div id="main-dashboard" class="hidden">
+        <div class="card header-flex">
+            <div>
+                <h1 ondblclick="toggleModal('panel-simulacion-oculto')" style="margin: 0; color: var(--accent); cursor: pointer; user-select: none;" title="Doble clic para opciones avanzadas">☕ Calidafé IoT</h1>
+                <small id="user-info" style="color: var(--subtext);"></small>
+            </div>
+            <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                <!-- Botón visible solo para Administrador -->
+                <button id="btn-admin-toggle" onclick="toggleModal('admin-panel-users')" class="btn-warning role-admin hidden">⚙️ Gestionar Usuarios</button>
+                <!-- Botón visible para Administrador y Productor -->
+                <button id="btn-lotes-toggle" onclick="toggleModal('lotes-panel')" class="btn-success role-lotes hidden">📦 Gestión de Lotes</button>
+                <button onclick="cerrarSesion()" class="btn-danger">Cerrar Sesión</button>
+            </div>
+        </div>
+
+        <!-- PANEL OCULTO DE SIMULACIÓN DE PESO (Se abre con doble clic en el título "☕ Calidafé IoT") -->
+        <div id="panel-simulacion-oculto" class="card hidden" style="border-left: 5px solid #a855f7; background: #1a162b;">
+            <div class="header-flex">
+                <h3 style="margin: 0; color: #c084fc;">🛠️ Control Interno de Peso (Sincronizado con OLED)</h3>
+                <button onclick="toggleModal('panel-simulacion-oculto')" style="background: transparent; padding: 5px 10px; font-size: 1.2em;">✕</button>
+            </div>
+            <p style="font-size: 0.85em; color: var(--subtext); margin: 8px 0 15px 0;">
+                Ingresa un peso en gramos. El ESP32 lo reflejará de inmediato en la pantalla OLED y en el Dashboard, iniciando automáticamente el descuento progresivo según la Temperatura y Humedad reales.
+            </p>
+            <div style="display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap;">
+                <div style="flex: 1; min-width: 220px;">
+                    <label>Peso Inicial / Actual en Báscula (g):</label>
+                    <input type="text" id="input-peso-simulado" placeholder="Ej. 1000 o 136.9" style="margin-bottom: 0;">
+                </div>
+                <div>
+                    <button onclick="enviarPesoSimulado()" class="btn-success" style="padding: 11px 20px;">⚖️ Aplicar Peso e Iniciar Descuento</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- BANNER DE ALERTAS EN TIEMPO REAL -->
+        <div id="contenedor-alertas-dashboard" class="hidden"></div>
+
+        <!-- PANEL ADMIN: GESTIÓN DE USUARIOS Y ROLES -->
+        <div id="admin-panel-users" class="card hidden role-admin" style="border-left: 5px solid var(--accent);">
+            <div class="header-flex">
+                <h3>👤 Panel Admin: Usuarios y Permisos</h3>
+                <button onclick="toggleModal('admin-panel-users')" style="background: transparent; padding: 5px 10px; font-size: 1.2em;">✕</button>
+            </div>
+            
+            <h4 style="color: var(--accent); margin-top: 10px;">Registrar Nuevo Usuario</h4>
+            <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; margin-top: 5px;">
+                <div><label>Nombre de Usuario:</label><input type="text" id="nuevo-nombre" placeholder="Ej. Carlos"></div>
+                <div><label>Correo:</label><input type="email" id="nuevo-correo" placeholder="correo@ejemplo.com"></div>
+                <div><label>PIN / Contraseña:</label><input type="password" id="nuevo-pin" placeholder="••••"></div>
+                <div>
+                    <label>Rol Asignado:</label>
+                    <select id="nuevo-rol">
+                        <option value="Operario">Operario</option>
+                        <option value="Productor">Productor</option>
+                        <option value="Administrador">Administrador</option>
+                    </select>
+                </div>
+            </div>
+            <button onclick="registrarNuevoUsuario()" class="btn-success">Guardar y Crear Usuario</button>
+
+            <h4 style="margin-top: 25px;">📋 Usuarios Registrados en el Sistema</h4>
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr><th>Nombre</th><th>Correo</th><th>Rol</th><th>Acciones</th></tr>
+                    </thead>
+                    <tbody id="tabla-usuarios-body">
+                        <tr><td colspan="4" style="text-align: center; color: var(--subtext);">Cargando usuarios...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- PANEL ADMIN: CALIBRACIÓN Y UMBRALES (EXCLUSIVO ADMINISTRADOR) -->
+        <div id="admin-calibration-panel" class="card hidden role-admin" style="border-left: 5px solid var(--warning);">
+            <div class="header-flex">
+                <h3 style="margin: 0; color: var(--warning);">⚖️ Calibración de Hardware y Umbrales (Admin)</h3>
+            </div>
+            <div class="grid" style="margin-top: 15px;">
+                <div>
+                    <label>Factor de Escala Báscula (HX711):</label>
+                    <input type="number" id="inputEscala" value="420" placeholder="Ej. 420">
+                </div>
+                <div>
+                    <label>Umbral Humedad Relativa Alerta (%):</label>
+                    <input type="number" id="inputUmbralHum" value="85" placeholder="Ej. 85">
+                </div>
+                <div style="display: flex; items-end: center; align-self: flex-end; gap: 10px; margin-bottom: 15px;">
+                    <button onclick="calibrarTara()" class="btn-warning">⚖️ Tarar a Cero</button>
+                    <button onclick="guardarConfiguracionHardware()" class="btn-success">💾 Guardar Parámetros</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- MÓDULO DE GESTIÓN DE LOTES (ADMINISTRADOR Y PRODUCTOR) -->
+        <div id="lotes-panel" class="card hidden role-lotes" style="border-left: 5px solid var(--info);">
+            <div class="header-flex">
+                <h3>📦 Gestión y Control de Lotes de Café</h3>
+                <button onclick="toggleModal('lotes-panel')" style="background: transparent; padding: 5px 10px; font-size: 1.2em;">✕</button>
+            </div>
+            
+            <div id="lote-activo-container" style="background: var(--input-bg); padding: 15px; border-radius: 8px; margin: 15px 0;">
+                <p style="margin: 0; color: var(--subtext);">Cargando estado del lote activo...</p>
+            </div>
+
+            <!-- ESTIMACIÓN DE HUMEDAD DEL GRANO -->
+            <div class="card" style="background: var(--bg); border-left: 5px solid var(--accent); margin: 15px 0;">
+                <h4 style="margin-top: 0; color: var(--accent);">🌾 Estimación de Humedad del Grano por Pérdida de Masa</h4>
+                <div class="grid">
+                    <div class="card" style="background: var(--input-bg); margin-bottom: 0;">
+                        <span class="metric-title">Humedad Estimada del Grano</span>
+                        <div id="val-humedad-grano" class="metric-value" style="color: var(--accent);">-- %</div>
+                        <div id="val-humedad-estado" class="metric-sub">Esperando lote activo...</div>
+                    </div>
+                    <div class="card" style="background: var(--input-bg); margin-bottom: 0;">
+                        <span class="metric-title">Rango Comercial (10% - 12%)</span>
+                        <div id="val-rango-alerta" class="metric-value" style="font-size: 1.2em; margin-top: 10px;">--</div>
+                        <div id="val-rango-sub" class="metric-sub">Objetivo estándar: 11%</div>
+                    </div>
+                    <div class="card" style="background: var(--input-bg); margin-bottom: 0;">
+                        <span class="metric-title">Tiempo Estimado (ETA)</span>
+                        <div id="val-tiempo-restante" class="metric-value" style="color: var(--warning); font-size: 1.5em;">--</div>
+                        <div id="val-tiempo-sub" class="metric-sub">Hasta alcanzar 11%</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ÍNDICE DE RIESGO SANITARIO (HR > 85%) -->
+            <div class="card" style="background: var(--bg); border-left: 5px solid var(--warning); margin: 15px 0;">
+                <h4 style="margin-top: 0; color: var(--warning);">🛡️ Índice de Riesgo Sanitario (HR > 85%)</h4>
+                <div class="grid">
+                    <div class="card" style="background: var(--input-bg); margin-bottom: 0;">
+                        <span class="metric-title">Clasificación de Riesgo</span>
+                        <div id="risk-nivel" class="metric-value" style="font-size: 1.2em; margin-top: 10px;">--</div>
+                        <div id="risk-nivel-sub" class="metric-sub">Basado en exposición a HR > 85%</div>
+                    </div>
+                    <div class="card" style="background: var(--input-bg); margin-bottom: 0;">
+                        <span class="metric-title">Horas Continuas (HR > 85%)</span>
+                        <div id="risk-continuas" class="metric-value" style="color: var(--warning); font-size: 1.5em;">0.0 h</div>
+                        <div class="metric-sub">Bloque máximo ininterrumpido</div>
+                    </div>
+                    <div class="card" style="background: var(--input-bg); margin-bottom: 0;">
+                        <span class="metric-title">Horas Acumuladas (HR > 85%)</span>
+                        <div id="risk-acumuladas" class="metric-value" style="color: var(--info); font-size: 1.5em;">0.0 h</div>
+                        <div class="metric-sub">Total acumulado en el lote</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- GRÁFICA INTERNA DE CURVA DE SECADO Y PESO DEL LOTE -->
+            <div class="card" style="background: var(--bg); border-left: 5px solid var(--info); margin: 15px 0;">
+                <div class="header-flex">
+                    <h4 id="titulo-grafica-lote-interno" style="margin: 0; color: var(--info);">📉 Curva de Peso y Secado del Lote</h4>
+                    <small style="color: var(--subtext);">Temperatura, Humedad y Peso (g)</small>
+                </div>
+                <canvas id="chart-lote-interno" style="max-height: 250px; margin-top: 12px;"></canvas>
+            </div>
+
+            <div id="form-nuevo-lote" class="hidden">
+                <h4 style="margin-bottom: 10px; color: var(--accent);">Iniciar Nuevo Lote</h4>
+                <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px;">
+                    <div><label>Nombre del Lote:</label><input type="text" id="lote-nombre" placeholder="Ej. Lote Caturra #1"></div>
+                    <div><label>Masa Inicial (g):</label><input type="number" id="lote-masa" placeholder="Ej. 1000"></div>
+                    <div><label>Humedad Inicial H₀ (%):</label><input type="number" step="0.1" id="lote-humedad" placeholder="Ej. 45.5"></div>
+                </div>
+                <button onclick="crearEIniciarLote()" class="btn-success" style="margin-top: 10px;">🚀 Crear e Iniciar Lote</button>
+            </div>
+
+            <h4 style="margin-top: 20px;">📜 Historial de Lotes Anteriores</h4>
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr><th>Lote</th><th>Masa Inicial</th><th>H₀ (%)</th><th>Estado</th><th>Creación</th><th>Acciones</th></tr>
+                    </thead>
+                    <tbody id="tabla-lotes-body">
+                        <tr><td colspan="6" style="text-align: center; color: var(--subtext);">Cargando lotes...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- TARJETAS DE TELEMETRÍA AMBIENTAL EN TIEMPO REAL -->
+        <div class="grid">
+            <div class="card"><span class="metric-title">Temperatura Marquesina</span><div id="val-temp" class="metric-value">-- °C</div></div>
+            <div class="card"><span class="metric-title">Humedad Relativa Aire</span><div id="val-hum" class="metric-value">-- %</div></div>
+            <div class="card"><span class="metric-title">Peso Muestra Actual</span><div id="val-peso" class="metric-value">-- g</div></div>
+            <div class="card"><span class="metric-title">Estado Extractor</span><div id="val-extractor" class="metric-value">--</div></div>
+        </div>
+
+        <!-- CONTROL MANUAL DE VENTILACIÓN (ADMINISTRADOR Y OPERARIO) -->
+        <div id="panel-controles-manuales" class="card header-flex role-control hidden">
+            <div><h3 style="margin: 0;">🎮 Control Manual de Ventilación</h3></div>
+            <div>
+                <button onclick="enviarComando('AUTO')" class="btn-warning">Modo AUTO</button>
+                <button onclick="enviarComando('ON')" class="btn-success">Forzar ON</button>
+                <button onclick="enviarComando('OFF')" class="btn-danger">Forzar OFF</button>
+            </div>
+        </div>
+
+        <!-- GRÁFICA Y TABLA DE HISTÓRICO DE LECTURAS -->
+        <div class="card">
+            <div class="header-flex">
+                <div>
+                    <h3 id="titulo-grafica" style="margin: 0;">📊 Histórico de Secado y Reportes</h3>
+                    <small id="subtitulo-filtro" style="color: var(--accent); display: none;"></small>
+                </div>
+                <div>
+                    <button id="btn-reset-filtro" onclick="restaurarVistaGeneral()" class="btn-warning btn-sm hidden" style="margin-right: 10px;">🔄 Ver General / En Vivo</button>
+                    <button onclick="exportarCSV()" class="btn-success btn-sm">📥 Exportar Reporte CSV</button>
+                </div>
+            </div>
+            <canvas id="chart-historico" style="max-height: 280px; margin-top: 15px;"></canvas>
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr><th>Fecha y Hora</th><th>Temperatura (°C)</th><th>Humedad Aire (%)</th><th>Peso (g)</th><th>Humedad Grano Est. (%)</th><th>Extractor</th></tr>
+                    </thead>
+                    <tbody id="tabla-historial-body">
+                        <tr><td colspan="6" style="text-align: center; color: var(--subtext);">Cargando registros...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    // --- CONFIGURACIÓN DE APIS Y ESTADO GLOBAL ---
+    const SUPABASE_URL = "https://rcuklgkjqqtcfywuerps.supabase.co";
+    const SUPABASE_KEY = "sb_publishable_gJCI5Q9IMxYolyRxp0cEgQ_xkaGlJBV";
+    const ESP32_LOCAL_URL = "http://192.168.1.50"; // Cambiar por la IP local del ESP32 si aplica
+    
+    let usuarioActual = null;
+    let chartInstance = null;
+    let chartLoteInternoInstance = null;
+    let historicoDatos = [];
+    let loteActivoGlobal = null;
+    let modoFiltradoLote = false;
+    
+    let ultimaTemperaturaGlobal = 0;
+    let ultimaHumedadGlobal = 0;
+    let timestampUltimoCambioPesoManual = 0;
+
+    // --- AUTENTICACIÓN Y ROLES ---
+    async function iniciarSesion() {
+        const inputUser = document.getElementById('login-user').value.trim().toLowerCase();
+        const pin = document.getElementById('login-pin').value.trim();
+        const errorEl = document.getElementById('login-error');
+
+        try {
+            const res = await fetch(`${SUPABASE_URL}/rest/v1/usuarios_app?select=*`, {
+                headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}` }
+            });
+            const usuarios = await res.json();
+            const encontrado = usuarios.find(u => 
+                (u.nombre.trim().toLowerCase() === inputUser || (u.correo && u.correo.trim().toLowerCase() === inputUser)) && 
+                u.pin.trim() === pin
+            );
+
+            if (encontrado) {
+                usuarioActual = encontrado;
+                errorEl.style.display = 'none';
+                document.getElementById('login-modal').classList.add('hidden');
+                document.getElementById('main-dashboard').classList.remove('hidden');
+                document.getElementById('user-info').innerText = `Usuario: ${usuarioActual.nombre} | Rol: ${usuarioActual.rol}`;
+                
+                aplicarPermisosPorRol(usuarioActual.rol);
+
+                inicializarGrafica();
+                cargarEstadoEnVivo();
+                cargarHistoricoGeneral();
+                cargarGestionLotes();
+                if (usuarioActual.rol.toLowerCase() === 'administrador') {
+                    cargarUsuariosAdmin();
+                }
+
+                setInterval(() => { if (!modoFiltradoLote) cargarEstadoEnVivo(); }, 3000);
+                setInterval(() => { if (!modoFiltradoLote) cargarHistoricoGeneral(); }, 30000);
+            } else {
+                errorEl.style.display = 'block';
+            }
+        } catch(e) { console.error("Error en Login:", e); errorEl.style.display = 'block'; }
+    }
+
+    function aplicarPermisosPorRol(rol) {
+        const rolNorm = rol ? rol.toLowerCase() : '';
+        
+        const elementosAdmin = document.querySelectorAll('.role-admin');
+        const elementosLotes = document.querySelectorAll('.role-lotes');
+        const elementosControl = document.querySelectorAll('.role-control');
+
+        elementosAdmin.forEach(el => el.classList.add('hidden'));
+        elementosLotes.forEach(el => el.classList.add('hidden'));
+        elementosControl.forEach(el => el.classList.add('hidden'));
+
+        if (rolNorm === 'administrador') {
+            elementosAdmin.forEach(el => el.classList.remove('hidden'));
+            elementosLotes.forEach(el => el.classList.remove('hidden'));
+            elementosControl.forEach(el => el.classList.remove('hidden'));
+        } else if (rolNorm === 'productor') {
+            elementosLotes.forEach(el => el.classList.remove('hidden'));
+        } else if (rolNorm === 'operario') {
+            elementosControl.forEach(el => el.classList.remove('hidden'));
+        }
+    }
+
+    function cerrarSesion() {
+        usuarioActual = null;
+        modoFiltradoLote = false;
+        document.getElementById('main-dashboard').classList.add('hidden');
+        document.getElementById('login-modal').classList.remove('hidden');
+        document.getElementById('login-user').value = '';
+        document.getElementById('login-pin').value = '';
+        document.getElementById('login-error').style.display = 'none';
+    }
+
+    function toggleModal(id) {
+        document.getElementById(id).classList.toggle('hidden');
+    }
+
+    // --- CALIBRACIÓN Y UMBRALES (ADMIN) ---
+    async function calibrarTara() {
+        if (!confirm("¿Deseas tarar (poner a cero) la báscula en este momento?")) return;
+        try {
+            let res = await fetch(`${ESP32_LOCAL_URL}/calibrar`, { method: 'POST' });
+            if (res.ok) {
+                alert("⚖️ Báscula tarada a cero con éxito.");
+            } else {
+                alert("⚠️ No se pudo enviar el comando a la IP local del ESP32.");
+            }
+        } catch(e) { alert("⚠️ El ESP32 no responde en la red local."); }
+    }
+
+    async function guardarConfiguracionHardware() {
+        const escala = parseFloat(document.getElementById('inputEscala').value);
+        const umbralHum = parseFloat(document.getElementById('inputUmbralHum').value);
+
+        try {
+            let res = await fetch(`${ESP32_LOCAL_URL}/configurar`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ escala, umbral_humedad: umbralHum })
+            });
+            if (res.ok) {
+                alert("💾 Parámetros guardados en el ESP32.");
+            } else {
+                alert("⚠️ Error al comunicarse con la placa local.");
+            }
+        } catch(e) { alert("⚠️ El ESP32 no responde en la red local."); }
+    }
+
+    // --- GESTIÓN DE USUARIOS ---
+    async function cargarUsuariosAdmin() {
+        try {
+            const res = await fetch(`${SUPABASE_URL}/rest/v1/usuarios_app?select=*`, {
+                headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}` }
+            });
+            const usuarios = await res.json();
+            const tbody = document.getElementById('tabla-usuarios-body');
+            tbody.innerHTML = '';
+
+            if (usuarios && usuarios.length > 0) {
+                usuarios.forEach(u => {
+                    tbody.innerHTML += `
+                        <tr>
+                            <td><b>${u.nombre}</b></td>
+                            <td>${u.correo || 'N/A'}</td>
+                            <td><span class="badge-optimal">${u.rol}</span></td>
+                            <td>
+                                <button onclick="cambiarPinUsuario(${u.id})" class="btn-warning btn-sm">🔑 PIN</button>
+                                <button onclick="eliminarUsuario(${u.id})" class="btn-danger btn-sm">🗑️ Borrar</button>
+                            </td>
+                        </tr>
+                    `;
+                });
+            } else {
+                tbody.innerHTML = `<tr><td colspan="4" style="text-align: center; color: var(--subtext);">No hay usuarios.</td></tr>`;
+            }
+        } catch(e) { console.error("Error usuarios:", e); }
+    }
+
+    async function cambiarPinUsuario(idUsuario) {
+        const nuevoPin = prompt("Ingresa el nuevo PIN / Contraseña:");
+        if (!nuevoPin) return;
+
+        const res = await fetch(`${SUPABASE_URL}/rest/v1/usuarios_app?id=eq.${idUsuario}`, {
+            method: 'PATCH',
+            headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}`, "Content-Type": "application/json", "Prefer": "return=minimal" },
+            body: JSON.stringify({ pin: nuevoPin })
+        });
+        if (res.ok) { alert("✅ PIN actualizado."); cargarUsuariosAdmin(); }
+    }
+
+    async function eliminarUsuario(idUsuario) {
+        if (!confirm("¿Eliminar este usuario definitivamente?")) return;
+        const res = await fetch(`${SUPABASE_URL}/rest/v1/usuarios_app?id=eq.${idUsuario}`, {
+            method: 'DELETE',
+            headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}`, "Prefer": "return=minimal" }
+        });
+        if (res.ok) { alert("🗑️ Usuario eliminado."); cargarUsuariosAdmin(); }
+    }
+
+    async function registrarNuevoUsuario() {
+        const nombre = document.getElementById('nuevo-nombre').value.trim();
+        const correo = document.getElementById('nuevo-correo').value.trim();
+        const pin = document.getElementById('nuevo-pin').value.trim();
+        const rol = document.getElementById('nuevo-rol').value;
+
+        if (!nombre || !correo || !pin) return alert("⚠️ Completa todos los campos.");
+
+        const res = await fetch(`${SUPABASE_URL}/rest/v1/usuarios_app`, {
+            method: 'POST',
+            headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}`, "Content-Type": "application/json", "Prefer": "return=minimal" },
+            body: JSON.stringify({ nombre, correo, pin, rol })
+        });
+        if (res.ok) {
+            alert("✅ Usuario registrado.");
+            document.getElementById('nuevo-nombre').value = '';
+            document.getElementById('nuevo-correo').value = '';
+            document.getElementById('nuevo-pin').value = '';
+            cargarUsuariosAdmin();
+            toggleModal('admin-panel-users');
+        }
+    }
+
+    // --- GESTIÓN DE LOTES ---
+    async function cargarGestionLotes() {
+        try {
+            const res = await fetch(`${SUPABASE_URL}/rest/v1/lotes?order=id.desc`, {
+                headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}` }
+            });
+            const lotes = await res.json();
+            
+            loteActivoGlobal = lotes.find(l => l.estado && l.estado.toLowerCase() === 'activo');
+            const containerActivo = document.getElementById('lote-activo-container');
+            const formNuevo = document.getElementById('form-nuevo-lote');
+
+            if (loteActivoGlobal) {
+                containerActivo.innerHTML = `
+                    <p style="margin: 0 0 8px 0; color: var(--accent); font-weight: bold;">🟢 Lote en Proceso Activo:</p>
+                    <p style="margin: 4px 0;"><b>Nombre:</b> ${loteActivoGlobal.nombre} (Masa Inicial: ${loteActivoGlobal.masa_inicial}g | H₀: ${loteActivoGlobal.humedad_inicial}%)</p>
+                    <div style="display: flex; gap: 10px; margin-top: 10px;">
+                        <button onclick='verDetallesLote(${JSON.stringify(loteActivoGlobal)})' class="btn-success btn-sm">📊 Ver Gráfica Lote</button>
+                        <button onclick="cerrarLoteActivo(${loteActivoGlobal.id})" class="btn-danger btn-sm">🔒 Cerrar Lote</button>
+                    </div>
+                `;
+                formNuevo.classList.add('hidden');
+            } else {
+                containerActivo.innerHTML = `<p style="margin: 0; color: var(--subtext);">No hay ningún lote activo en este momento.</p>`;
+                formNuevo.classList.remove('hidden');
+            }
+
+            const tbody = document.getElementById('tabla-lotes-body');
+            tbody.innerHTML = '';
+            lotes.forEach(l => {
+                const creado = new Date(l.created_at).toLocaleDateString();
+                const badgeEstado = (l.estado && l.estado.toLowerCase() === 'activo') 
+                    ? '<span style="color: var(--accent); font-weight: bold;">ACTIVO</span>' 
+                    : '<span style="color: var(--subtext);">CERRADO</span>';
+
+                tbody.innerHTML += `
+                    <tr>
+                        <td><b>${l.nombre}</b></td>
+                        <td>${l.masa_inicial} g</td>
+                        <td>${l.humedad_inicial} %</td>
+                        <td>${badgeEstado}</td>
+                        <td>${creado}</td>
+                        <td>
+                            <button onclick='verDetallesLote(${JSON.stringify(l)})' class="btn-success btn-sm">🔍 Ver</button>
+                            <button onclick="eliminarLote(${l.id})" class="btn-danger btn-sm">🗑️ Borrar</button>
+                        </td>
+                    </tr>
+                `;
+            });
+        } catch(e) { console.error("Error lotes:", e); }
+    }
+
+    async function eliminarLote(idLote) {
+        if (!confirm("¿Estás seguro de eliminar este lote?")) return;
+        const res = await fetch(`${SUPABASE_URL}/rest/v1/lotes?id=eq.${idLote}`, {
+            method: 'DELETE',
+            headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}`, "Prefer": "return=minimal" }
+        });
+        if (res.ok) { alert("🗑️ Lote eliminado."); cargarGestionLotes(); if (modoFiltradoLote) restaurarVistaGeneral(); }
+    }
+
+    async function verDetallesLote(lote) {
+        modoFiltradoLote = true;
+
+        document.getElementById('titulo-grafica').innerText = `📊 Reporte del Lote: ${lote.nombre}`;
+        document.getElementById('titulo-grafica-lote-interno').innerText = `📉 Curva de Peso y Secado: ${lote.nombre}`;
+        document.getElementById('subtitulo-filtro').innerText = `Masa Inicial: ${lote.masa_inicial}g | H₀: ${lote.humedad_inicial}%`;
+        document.getElementById('subtitulo-filtro').style.display = 'block';
+        document.getElementById('btn-reset-filtro').classList.remove('hidden');
+
+        try {
+            let url = `${SUPABASE_URL}/rest/v1/lecturas_cafe?created_at=gte.${encodeURIComponent(lote.created_at)}&order=created_at.asc`;
+            if (lote.closed_at) url += `&created_at=lte.${encodeURIComponent(lote.closed_at)}`;
+
+            let res = await fetch(url, { headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}` } });
+            let data = await res.json();
+
+            if (data && data.length > 0) {
+                historicoDatos = data;
+                actualizarGraficaYTabla(historicoDatos, lote);
+                evaluarRiesgoSanitario(historicoDatos);
+            } else {
+                alert("⚠️ No hay registros históricos en ese rango de fechas para este lote.");
+            }
+        } catch(e) { console.error(e); }
+    }
+
+    function restaurarVistaGeneral() {
+        modoFiltradoLote = false;
+        document.getElementById('titulo-grafica').innerText = `📊 Histórico de Secado y Reportes`;
+        document.getElementById('titulo-grafica-lote-interno').innerText = `📉 Curva de Peso y Secado del Lote`;
+        document.getElementById('subtitulo-filtro').style.display = 'none';
+        document.getElementById('btn-reset-filtro').classList.add('hidden');
+        cargarHistoricoGeneral();
+    }
+
+    async function crearEIniciarLote() {
+        const nombre = document.getElementById('lote-nombre').value.trim();
+        const masa_inicial = parseFloat(document.getElementById('lote-masa').value);
+        const humedad_inicial = parseFloat(document.getElementById('lote-humedad').value);
+
+        if (!nombre || isNaN(masa_inicial) || isNaN(humedad_inicial)) return alert("⚠️ Completa los datos correctamente.");
+
+        const res = await fetch(`${SUPABASE_URL}/rest/v1/lotes`, {
+            method: 'POST',
+            headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}`, "Content-Type": "application/json", "Prefer": "return=minimal" },
+            body: JSON.stringify({ nombre, masa_inicial, humedad_inicial, estado: 'activo' })
+        });
+        if (res.ok) {
+            await aplicarPesoDirectoNube(masa_inicial, true);
+            alert("✅ Lote creado e iniciado.");
+            cargarGestionLotes();
+        }
+    }
+
+    async function cerrarLoteActivo(idLote) {
+        if (!confirm("¿Cerrar este lote de café?")) return;
+        const res = await fetch(`${SUPABASE_URL}/rest/v1/lotes?id=eq.${idLote}`, {
+            method: 'PATCH',
+            headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}`, "Content-Type": "application/json", "Prefer": "return=minimal" },
+            body: JSON.stringify({ estado: 'cerrado', closed_at: new Date().toISOString() })
+        });
+        if (res.ok) { alert("🔒 Lote cerrado."); cargarGestionLotes(); }
+    }
+
+    // --- CÁLCULO DE RIESGO SANITARIO ---
+    function evaluarRiesgoSanitario(datos) {
+        if (!datos || datos.length === 0) {
+            document.getElementById('risk-nivel').innerHTML = '<span class="badge-optimal">SEGURO</span>';
+            document.getElementById('risk-continuas').innerText = "0.0 h";
+            document.getElementById('risk-acumuladas').innerText = "0.0 h";
+            return;
+        }
+
+        const ordenadas = [...datos].sort((a,b) => new Date(a.created_at) - new Date(b.created_at));
+        let msAcumulado = 0, maxMsContinuo = 0, msContinuoActual = 0;
+
+        for (let i = 0; i < ordenadas.length; i++) {
+            if (ordenadas[i].humedad > 85.0) {
+                let duracionPuntoMs = 60000;
+                if (i < ordenadas.length - 1) {
+                    const diff = new Date(ordenadas[i+1].created_at) - new Date(ordenadas[i].created_at);
+                    if (diff > 0 && diff < 15 * 60 * 1000) duracionPuntoMs = diff;
+                }
+                msAcumulado += duracionPuntoMs;
+                msContinuoActual += duracionPuntoMs;
+                if (msContinuoActual > maxMsContinuo) maxMsContinuo = msContinuoActual;
+            } else { msContinuoActual = 0; }
+        }
+
+        const horasAcumuladas = msAcumulado / (1000 * 60 * 60);
+        const horasContinuas = maxMsContinuo / (1000 * 60 * 60);
+        const maxH = Math.max(horasAcumuladas, horasContinuas);
+
+        let badgeHtml = (maxH >= 6.0) 
+            ? '<span class="badge-danger-risk">🚨 ALERTA (≥ 6h)</span>' 
+            : (maxH >= 3.0) 
+                ? '<span class="badge-warning-risk">⚠️ PRECAUCIÓN (3-6h)</span>' 
+                : '<span class="badge-optimal">✅ SEGURO (< 3h)</span>';
+
+        document.getElementById('risk-nivel').innerHTML = badgeHtml;
+        document.getElementById('risk-continuas').innerText = horasContinuas.toFixed(1) + " h";
+        document.getElementById('risk-acumuladas').innerText = horasAcumuladas.toFixed(1) + " h";
+    }
+
+    // --- ALERTAS DE HARDWARE Y AMBIENTE ---
+    function procesarAlertasDashboard(temp, hum, peso, extractor, alertaDht, alertaPeso) {
+        const contenedor = document.getElementById('contenedor-alertas-dashboard');
+        let alertasHtml = "";
+
+        if (alertaDht) {
+            alertasHtml += `<div class="alert-banner"><div><h4 style="margin:0; color:var(--danger);">🚨 ALERTA HARDWARE: Sensor DHT22 Con Falla</h4><p style="margin:4px 0 0 0; font-size:0.9em;">Sin lecturas válidas de temperatura y humedad.</p></div><div><span class="badge-danger-risk">FALLA DHT22</span></div></div>`;
+        }
+
+        if (alertaPeso) {
+            alertasHtml += `<div class="alert-banner"><div><h4 style="margin:0; color:var(--danger);">🚨 ALERTA HARDWARE: Báscula HX711 Con Falla</h4><p style="margin:4px 0 0 0; font-size:0.9em;">La celda de carga no responde.</p></div><div><span class="badge-danger-risk">FALLA BÁSCULA</span></div></div>`;
+        }
+
+        if (hum > 85.0 && !alertaDht) {
+            alertasHtml += `<div class="alert-banner"><div><h4 style="margin:0; color:var(--danger);">🚨 ALERTA CRÍTICA: Humedad Aire Alta (${hum}%)</h4><p style="margin:4px 0 0 0; font-size:0.9em;">Riesgo elevado de proliferación de hongos.</p></div><div><span class="badge-danger-risk">PELIGRO HONGOS</span></div></div>`;
+        }
+
+        if (loteActivoGlobal && loteActivoGlobal.masa_inicial > 0 && !alertaPeso && peso > 0) {
+            const ms = loteActivoGlobal.masa_inicial * (1 - (loteActivoGlobal.humedad_inicial / 100));
+            const Ht = (1 - (ms / peso)) * 100;
+            if (Ht >= 10.0 && Ht <= 12.0) {
+                alertasHtml += `<div class="alert-success-banner"><div><h4 style="margin:0; color:var(--accent);">🎯 ALERTA ÓPTIMA: Grano en Rango (${Ht.toFixed(1)}%)</h4><p style="margin:4px 0 0 0; font-size:0.9em;">Ideal para almacenamiento y comercialización.</p></div><div><span class="badge-optimal">EN RANGO</span></div></div>`;
+            }
+        }
+
+        if (alertasHtml !== "") {
+            contenedor.innerHTML = alertasHtml;
+            contenedor.classList.remove('hidden');
+        } else {
+            contenedor.innerHTML = "";
+            contenedor.classList.add('hidden');
+        }
+    }
+
+    // --- TELEMETRÍA EN TIEMPO REAL ---
+    async function cargarEstadoEnVivo() {
+        if (Date.now() - timestampUltimoCambioPesoManual < 4000) return;
+
+        try {
+            const res = await fetch(`${SUPABASE_URL}/rest/v1/estado_actual?id=eq.1`, {
+                headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}` }
+            });
+            const data = await res.json();
+            if (data && data.length > 0) {
+                const actual = data[0];
+                ultimaTemperaturaGlobal = actual.temperatura;
+                ultimaHumedadGlobal = actual.humedad;
+
+                document.getElementById('val-temp').innerText = actual.alerta_dht ? "🚨 ERROR" : (actual.temperatura + " °C");
+                document.getElementById('val-hum').innerText = actual.alerta_dht ? "🚨 ERROR" : (actual.humedad + " %");
+                document.getElementById('val-peso').innerText = actual.alerta_peso ? "🚨 ERROR" : (actual.peso + " g");
+                document.getElementById('val-extractor').innerText = actual.extractor ? "ENCENDIDO" : "APAGADO";
+
+                procesarAlertasDashboard(actual.temperatura, actual.humedad, actual.peso, actual.extractor, actual.alerta_dht || false, actual.alerta_peso || false);
+
+                if (loteActivoGlobal && loteActivoGlobal.masa_inicial > 0 && !actual.alerta_peso && actual.peso > 0) {
+                    const ms = loteActivoGlobal.masa_inicial * (1 - (loteActivoGlobal.humedad_inicial / 100));
+                    let Ht = (1 - (ms / actual.peso)) * 100;
+                    if (Ht < 0) Ht = 0;
+
+                    document.getElementById('val-humedad-grano').innerText = Ht.toFixed(1) + " %";
+                    document.getElementById('val-humedad-estado').innerText = `Lote: ${loteActivoGlobal.nombre}`;
+
+                    const elRango = document.getElementById('val-rango-alerta');
+                    const elEta = document.getElementById('val-tiempo-restante');
+                    const elEtaSub = document.getElementById('val-tiempo-sub');
+
+                    if (Ht >= 10.0 && Ht <= 12.0) {
+                        elRango.innerHTML = `<span class="badge-optimal">🎯 ÓPTIMO (${Ht.toFixed(1)}%)</span>`;
+                        elEta.innerText = "0.0 h (Listo)";
+                        elEtaSub.innerText = "Meta comercial alcanzada";
+                    } else if (Ht > 12.0) {
+                        elRango.innerHTML = `<span class="badge-warning-risk">⏳ En Proceso (${Ht.toFixed(1)}%)</span>`;
+                        const pesoObjetivo11 = ms / (1 - 0.11);
+                        const gramosPorPerder = Math.max(0, actual.peso - pesoObjetivo11);
+                        const factorTemp = Math.max(0.1, (actual.temperatura - 15.0) / 25.0);
+                        const factorHum = Math.max(0.05, (90.0 - actual.humedad) / 60.0);
+                        const tasaGramosHora = Math.max(4.5, (0.18 * factorTemp * factorHum) * 720);
+                        const horasRestantes = gramosPorPerder / tasaGramosHora;
+
+                        if (horasRestantes < 1.0) {
+                            elEta.innerText = `${Math.round(horasRestantes * 60)} min`;
+                        } else {
+                            elEta.innerText = `${horasRestantes.toFixed(1)} h`;
+                        }
+                        elEtaSub.innerText = `Meta 11%: ${pesoObjetivo11.toFixed(0)} g`;
+                    } else {
+                        elRango.innerHTML = `<span class="badge-danger-risk">⚠️ SOBRESECADO (${Ht.toFixed(1)}%)</span>`;
+                        elEta.innerText = "Completado";
+                        elEtaSub.innerText = "Por debajo del 10%";
+                    }
+                } else {
+                    document.getElementById('val-humedad-grano').innerText = "-- %";
+                    document.getElementById('val-humedad-estado').innerText = actual.alerta_peso ? "Error de sensor" : "Sin lote activo";
+                    document.getElementById('val-rango-alerta').innerText = "--";
+                    document.getElementById('val-tiempo-restante').innerText = "--";
+                }
+            }
+        } catch(e) { console.error(e); }
+    }
+
+    async function cargarHistoricoGeneral() {
+        if (modoFiltradoLote) return;
+        try {
+            const res = await fetch(`${SUPABASE_URL}/rest/v1/lecturas_cafe?order=id.desc&limit=30`, {
+                headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}` }
+            });
+            const data = await res.json();
+            if (data && data.length > 0) {
+                historicoDatos = data.reverse();
+                actualizarGraficaYTabla(historicoDatos);
+                evaluarRiesgoSanitario(historicoDatos);
+            }
+        } catch(e) { console.error(e); }
+    }
+
+    function actualizarGraficaYTabla(datos, loteRef = null) {
+        const etiquetas = datos.map(d => new Date(d.created_at).toLocaleTimeString());
+        const serieTemp = datos.map(d => d.temperatura);
+        const serieHum = datos.map(d => d.humedad);
+        const seriePeso = datos.map(d => d.peso);
+
+        // Actualizar Gráfica Principal de Histórico
+        if (chartInstance) {
+            chartInstance.data.labels = etiquetas;
+            chartInstance.data.datasets[0].data = serieTemp;
+            chartInstance.data.datasets[1].data = serieHum;
+            chartInstance.data.datasets[2].data = seriePeso;
+            chartInstance.update();
+        }
+
+        // Actualizar Gráfica Interna del Panel de Lotes
+        if (chartLoteInternoInstance) {
+            chartLoteInternoInstance.data.labels = etiquetas;
+            chartLoteInternoInstance.data.datasets[0].data = serieTemp;
+            chartLoteInternoInstance.data.datasets[1].data = serieHum;
+            chartLoteInternoInstance.data.datasets[2].data = seriePeso;
+            chartLoteInternoInstance.update();
+        }
+
+        const tbody = document.getElementById('tabla-historial-body');
+        tbody.innerHTML = '';
+        if (datos.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="6" style="text-align: center; color: var(--subtext);">Sin registros.</td></tr>`;
+            return;
+        }
+
+        const loteAux = loteRef || loteActivoGlobal;
+        [...datos].reverse().forEach(row => {
+            const fechaF = new Date(row.created_at).toLocaleString();
+            const extractorBadge = row.extractor ? '<span style="color:var(--accent); font-weight:bold;">ENCENDIDO</span>' : '<span style="color:var(--subtext);">APAGADO</span>';
+            
+            let hGranoStr = "--";
+            if (loteAux && loteAux.masa_inicial > 0 && row.peso > 0) {
+                const ms = loteAux.masa_inicial * (1 - (loteAux.humedad_inicial / 100));
+                let Ht = (1 - (ms / row.peso)) * 100;
+                if (Ht < 0) Ht = 0;
+                hGranoStr = `${Ht.toFixed(1)} %`;
+            }
+
+            tbody.innerHTML += `
+                <tr>
+                    <td>${fechaF}</td>
+                    <td>${row.temperatura} °C</td>
+                    <td>${row.humedad} %</td>
+                    <td><b>${row.peso} g</b></td>
+                    <td><b style="color:var(--accent);">${hGranoStr}</b></td>
+                    <td>${extractorBadge}</td>
+                </tr>
+            `;
+        });
+    }
+
+    async function enviarComando(modo) {
+        if (modo === 'OFF' && (ultimaTemperaturaGlobal >= 40.0 || ultimaHumedadGlobal >= 85.0)) {
+            return alert(`⚠️ BLOQUEADO: Condiciones críticas (Temp: ${ultimaTemperaturaGlobal}°C, Hum: ${ultimaHumedadGlobal}%).`);
+        }
+
+        await fetch(`${SUPABASE_URL}/rest/v1/comandos_actuador`, {
+            method: 'POST',
+            headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}`, "Content-Type": "application/json", "Prefer": "return=minimal" },
+            body: JSON.stringify({ modo_solicitado: modo, solicitado_por: usuarioActual.nombre })
+        });
+        alert(`Comando ${modo} enviado con éxito.`);
+    }
+
+    // --- FUNCIÓN UNIFICADA DEL PANEL OCULTO DE PESO ---
+    async function enviarPesoSimulado() {
+        const rawInput = document.getElementById('input-peso-simulado').value.trim().replace(',', '.');
+        const valor = parseFloat(rawInput);
+        if (isNaN(valor) || valor < 0) return alert("⚠️ Ingresa un peso válido en gramos.");
+        await aplicarPesoDirectoNube(valor, false);
+    }
+
+    async function aplicarPesoDirectoNube(valor, silencioso = false) {
+        const pesoRedondeado = parseFloat(valor.toFixed(1));
+        timestampUltimoCambioPesoManual = Date.now();
+        document.getElementById('val-peso').innerText = pesoRedondeado.toFixed(1) + " g";
+
+        try {
+            // 1. Actualiza directamente estado_actual en Supabase para reflejo inmediato en Web y ESP32 (OLED)
+            const resEstado = await fetch(`${SUPABASE_URL}/rest/v1/estado_actual?id=eq.1`, {
+                method: 'PATCH',
+                headers: { 
+                    "apikey": SUPABASE_KEY, 
+                    "Authorization": `Bearer ${SUPABASE_KEY}`, 
+                    "Content-Type": "application/json", 
+                    "Prefer": "return=minimal" 
+                },
+                body: JSON.stringify({ peso: pesoRedondeado, alerta_peso: false })
+            });
+
+            // 2. Envía también por comandos_actuador para sincronización en el ESP32
+            const nombreUser = usuarioActual ? usuarioActual.nombre : 'Admin';
+            await fetch(`${SUPABASE_URL}/rest/v1/comandos_actuador`, {
+                method: 'POST',
+                headers: { 
+                    "apikey": SUPABASE_KEY, 
+                    "Authorization": `Bearer ${SUPABASE_KEY}`, 
+                    "Content-Type": "application/json", 
+                    "Prefer": "return=minimal" 
+                },
+                body: JSON.stringify({ modo_solicitado: `SIM_PESO:${pesoRedondeado.toFixed(1)}`, solicitado_por: nombreUser })
+            });
+
+            if (!silencioso) {
+                if (resEstado.ok) {
+                    alert(`✅ Peso fijado en ${pesoRedondeado.toFixed(1)} g. Reflejado en OLED y Web con descuento automático activo.`);
+                } else {
+                    alert("⚠️ No se pudo actualizar la tabla estado_actual en Supabase.");
+                }
+            }
+        } catch(e) {
+            console.error(e);
+            if (!silencioso) alert("⚠️ Error de red al enviar el peso.");
+        }
+    }
+
+    function exportarCSV() {
+        if (historicoDatos.length === 0) return alert("No hay datos para exportar");
+        let csv = "ID,Fecha,Temperatura_C,Humedad_Aire_Pct,Peso_g,Humedad_Grano_Est_Pct,Extractor\n";
+        
+        historicoDatos.forEach(r => { 
+            let hGranoEst = "";
+            if (loteActivoGlobal && loteActivoGlobal.masa_inicial > 0 && r.peso > 0) {
+                const ms = loteActivoGlobal.masa_inicial * (1 - (loteActivoGlobal.humedad_inicial / 100));
+                let Ht = (1 - (ms / r.peso)) * 100;
+                hGranoEst = Ht.toFixed(2);
+            }
+            csv += `${r.id},"${r.created_at}",${r.temperatura},${r.humedad},${r.peso},${hGranoEst},${r.extractor}\n`; 
+        });
+        
+        const blob = new Blob([csv], { type: 'text/csv' });
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = "Reporte_Calidafe.csv";
+        link.click();
+    }
+
+    function crearConfiguracionGraficaTriple() {
+        return {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [
+                    { label: 'Temperatura (°C)', borderColor: '#ef4444', data: [], fill: false, tension: 0.3, yAxisID: 'y' },
+                    { label: 'Humedad Aire (%)', borderColor: '#3b82f6', data: [], fill: false, tension: 0.3, yAxisID: 'y' },
+                    { label: 'Peso Muestra (g)', borderColor: '#22c55e', data: [], fill: false, tension: 0.3, yAxisID: 'y1' }
+                ]
+            },
+            options: { 
+                responsive: true, 
+                maintainAspectRatio: false,
+                interaction: { mode: 'index', intersect: false },
+                scales: {
+                    y: {
+                        type: 'linear',
+                        display: true,
+                        position: 'left',
+                        title: { display: true, text: 'Temp (°C) / Hum (%)', color: '#94a3b8' },
+                        ticks: { color: '#94a3b8' },
+                        grid: { color: 'rgba(51, 65, 85, 0.5)' }
+                    },
+                    y1: {
+                        type: 'linear',
+                        display: true,
+                        position: 'right',
+                        title: { display: true, text: 'Peso (g)', color: '#22c55e' },
+                        ticks: { color: '#22c55e' },
+                        grid: { drawOnChartArea: false }
+                    },
+                    x: {
+                        ticks: { color: '#94a3b8' },
+                        grid: { color: 'rgba(51, 65, 85, 0.3)' }
+                    }
+                }
+            }
+        };
+    }
+
+    function inicializarGrafica() {
+        const ctx = document.getElementById('chart-historico').getContext('2d');
+        chartInstance = new Chart(ctx, crearConfiguracionGraficaTriple());
+
+        const ctxLote = document.getElementById('chart-lote-interno').getContext('2d');
+        chartLoteInternoInstance = new Chart(ctxLote, crearConfiguracionGraficaTriple());
+    }
+</script>
+</body>
+</html>
